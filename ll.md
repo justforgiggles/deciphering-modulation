@@ -1,0 +1,3 @@
+I want you to create the following project in Go. Firstly scaffold the Go project and the implement an AM module where it takes the file in the data directory and tranforms it into an amplitude modulated audio file or possibly and audio stream that can be played. 
+
+I want this modulation function to be understandable where the buckets or chunks on audio is passed into as an array and they produce a modulated array as an output.

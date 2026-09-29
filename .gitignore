@@ -1,0 +1,12 @@
+/modulated.wav
+/modulated-bits.wav
+/recovered.png
+/deciphering-modulation
+/output/am-*.wav
+/output/fm-*.wav
+/output/pm-*.wav
+/output/qpsk-*.wav
+/output/pm_bpsk-*.wav
+/output/pm_qpsk-*.wav
+/output/qam-*.wav
+/output/*-waveform-*.png
