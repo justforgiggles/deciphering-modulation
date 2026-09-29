@@ -27,6 +27,15 @@ for kind in am fm pm_bpsk pm_qpsk qam; do
     python3 waveform.py "$waveform_tmpdir/$kind.wav" 0 0.05 --source "$waveform_tmpdir/input" --bits-per-symbol "$bits_per_symbol" -o "$png"
 done
 
+png="output/fdm-demo-waveform-0-0.05.png"
+if [ -e "$png" ]; then
+    printf 'Already exists: %s\n' "$png"
+else
+    printf '\166' > "$waveform_tmpdir/second"
+    go run . fdm -in1 "$waveform_tmpdir/input" -in2 "$waveform_tmpdir/second" -out "$waveform_tmpdir/fdm.wav"
+    python3 waveform.py "$waveform_tmpdir/fdm.wav" 0 0.05 -o "$png"
+fi
+
 for wav in output/*.wav; do
     [ -f "$wav" ] || continue
     png="${wav%.wav}-waveform-0-0.05.png"

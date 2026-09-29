@@ -40,7 +40,7 @@ The script accepts mono, 16-bit PCM WAV files and saves beside the input by
 default. `--source` adds bit labels and boundaries using the original file bytes;
 use it only when that file was encoded into the WAV. It reports an error if the
 output file already exists.
-Run `./run_waveform.sh` to create separate AM, FM, BPSK, QPSK, and QAM demo PNGs, plus plots
+Run `./run_waveform.sh` to create separate AM, FM, BPSK, QPSK, QAM, and FDM demo PNGs, plus plots
 for WAVs already in `output/`. It uses the same 0–0.05 second window for each.
 The labeled demo plots show the first five bits, `1 0 0 0 1`: AM drops to silence,
 FM changes cycle spacing, and PM flips phase at the first bit boundary. Existing
@@ -282,3 +282,36 @@ carrier/tone frequencies above zero and below 24,000 Hz.
 These are educational settings, not complete modem standards or a 56k handshake.
 The original unit peak amplitude is preserved. Run the scripts again after
 changing settings; existing WAV files are not overwritten.
+
+### FDM: two files on separate carriers
+
+```sh
+./run_fdm.sh first.bin second.bin                 # AM, 1070 Hz and 3070 Hz
+./run_fdm.sh first.bin second.bin qam 1500 4500
+go run . fdm -in1 first.bin -in2 second.bin -modulation fm -carrier1 1070 -carrier2 3070 -out combined.wav
+```
+
+Each file becomes MSB-first bits and passes through its own processor, with
+independent carrier phase. Both channels use the selected modulation (`am`,
+`fm`, `pm_bpsk`, `pm_qpsk`, or `qam`) and their configured bit rate. Carrier flags
+select FM center frequencies; deviation remains ±250 Hz. Defaults are AM,
+1,070/3,070 Hz, and `fdm.wav`. The script rebuilds and creates a unique
+`output/fdm-<timestamp>-<process-id>.wav`.
+
+The `fdm.Mix(first, second []float64) ([]float64, error)` function combines
+normalized audio arrays as `(first + second) / 2`, leaving both inputs unchanged.
+Missing samples are silence. Output lasts as long as the longer file; the
+remaining channel stays at half gain when the shorter file ends. Empty files
+are supported, including a header-only WAV when both are empty. Streaming uses
+the existing 256-byte chunks and rejects mismatched processor timing.
+
+All five modulation packages expose `New(carrierHz float64) (*Processor, error)`;
+their zero-value processors retain the original defaults. Only nonfinite
+frequencies are rejected. Identical, overlapping, zero, negative, and
+above-Nyquist carriers are permitted for experiments. There is no automatic
+spacing, guard band, filtering, or demultiplexer. Distinct carriers with adequate
+separation provide FDM; overlapping choices simply produce a mixed waveform.
+
+`./run_waveform.sh` also generates an unlabeled FDM demo from two independent
+one-byte inputs, `0x89` and `0x76`, and plots saved FDM WAVs. A composite waveform
+does not have a single source-bit sequence to label.

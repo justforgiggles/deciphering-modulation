@@ -9,4 +9,6 @@
 /output/pm_bpsk-*.wav
 /output/pm_qpsk-*.wav
 /output/qam-*.wav
+/output/fdm-*.wav
 /output/*-waveform-*.png
+/fdm.wav

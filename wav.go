@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 
+	"github.com/justforgiggles/deciphering-modulation/fdm"
 	"github.com/justforgiggles/deciphering-modulation/modulation"
 )
 
@@ -49,20 +50,46 @@ func headerFor(byteCount int64, processor modulation.Processor) (wavHeader, erro
 	}, nil
 }
 
-func encodeFile(inputPath, outputPath string, processor modulation.Processor) (err error) {
-	input, err := os.Open(inputPath)
-	if err != nil {
-		return err
+func encodeFile(inputPath, outputPath string, processor modulation.Processor) error {
+	return encodeFiles([]string{inputPath}, outputPath, []modulation.Processor{processor})
+}
+
+func streamHeader(counts []int64, processors []modulation.Processor) (wavHeader, error) {
+	if len(counts) < 1 || len(counts) > 2 || len(counts) != len(processors) {
+		return wavHeader{}, errors.New("expected one or two matching inputs and processors")
 	}
-	defer input.Close()
-	info, err := input.Stat()
-	if err != nil {
-		return err
+	longest := int64(0)
+	for i, processor := range processors {
+		if _, err := headerFor(counts[i], processor); err != nil {
+			return wavHeader{}, err
+		}
+		if processor.SampleRate() != processors[0].SampleRate() || processor.SamplesPerBit() != processors[0].SamplesPerBit() {
+			return wavHeader{}, errors.New("channel processors must have matching sample rates and samples per bit")
+		}
+		longest = max(longest, counts[i])
 	}
-	if !info.Mode().IsRegular() {
-		return errors.New("input must be a regular file")
+	return headerFor(longest, processors[0])
+}
+
+func encodeFiles(inputPaths []string, outputPath string, processors []modulation.Processor) (err error) {
+	inputs := make([]io.Reader, len(inputPaths))
+	counts := make([]int64, len(inputPaths))
+	for i, path := range inputPaths {
+		input, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer input.Close()
+		info, err := input.Stat()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("input must be a regular file")
+		}
+		inputs[i], counts[i] = input, info.Size()
 	}
-	if _, err := headerFor(info.Size(), processor); err != nil {
+	if _, err := streamHeader(counts, processors); err != nil {
 		return err
 	}
 	output, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
@@ -75,50 +102,78 @@ func encodeFile(inputPath, outputPath string, processor modulation.Processor) (e
 			err = errors.Join(err, os.Remove(outputPath))
 		}
 	}()
-	return encodeAudio(input, output, info.Size(), processor)
+	return encodeStreams(inputs, output, counts, processors)
 }
 
 func encodeAudio(input io.Reader, output io.Writer, byteCount int64, processor modulation.Processor) error {
-	header, err := headerFor(byteCount, processor)
+	return encodeStreams([]io.Reader{input}, output, []int64{byteCount}, []modulation.Processor{processor})
+}
+
+func encodeStreams(inputs []io.Reader, output io.Writer, counts []int64, processors []modulation.Processor) error {
+	if len(inputs) != len(counts) {
+		return errors.New("input count mismatch")
+	}
+	header, err := streamHeader(counts, processors)
 	if err != nil {
 		return err
 	}
 	if err := binary.Write(output, binary.LittleEndian, header); err != nil {
 		return err
 	}
-	var raw [chunkSize]byte
-	for remaining := byteCount; remaining > 0; {
-		n := int(min(remaining, chunkSize))
-		if _, err := io.ReadFull(input, raw[:n]); err != nil {
-			return err
-		}
-		bits := modulation.BytesToBits(raw[:n])
-		samples, err := processor.Modulate(bits)
-		if err != nil {
-			return err
-		}
-		if len(samples) != len(bits)*processor.SamplesPerBit() {
-			return errors.New("processor returned an unexpected number of samples")
-		}
-		pcm := make([]int16, len(samples))
-		for i, sample := range samples {
-			if math.IsNaN(sample) || math.IsInf(sample, 0) || sample < -1 || sample > 1 {
-				return fmt.Errorf("processor sample %d must be finite and in [-1, 1]", i)
-			}
-			pcm[i] = int16(math.Round(sample * 32767))
-		}
-		if err := binary.Write(output, binary.LittleEndian, pcm); err != nil {
-			return err
-		}
-		remaining -= int64(n)
+	longest := int64(0)
+	for _, count := range counts {
+		longest = max(longest, count)
 	}
-	// Detect input growth after Stat instead of silently ignoring extra bytes.
-	var extra [1]byte
-	if _, err := io.ReadFull(input, extra[:]); err != io.EOF {
-		if err != nil {
+	var raw [chunkSize]byte
+	for offset := int64(0); offset < longest; offset += chunkSize {
+		channels := make([][]float64, len(inputs))
+		for i, input := range inputs {
+			n := int(min(max(counts[i]-offset, 0), chunkSize))
+			if n == 0 {
+				continue
+			} // Ended channels contribute silence, not encoded zero bits.
+			if _, err := io.ReadFull(input, raw[:n]); err != nil {
+				return err
+			}
+			bits := modulation.BytesToBits(raw[:n])
+			channels[i], err = processors[i].Modulate(bits)
+			if err != nil {
+				return err
+			}
+			if len(channels[i]) != len(bits)*processors[i].SamplesPerBit() {
+				return errors.New("processor returned an unexpected number of samples")
+			}
+		}
+		samples := channels[0]
+		if len(channels) == 2 {
+			samples, err = fdm.Mix(channels[0], channels[1])
+			if err != nil {
+				return err
+			}
+		}
+		if err := writePCM(output, samples); err != nil {
 			return err
 		}
-		return errors.New("unexpected trailing input data")
+	}
+	for _, input := range inputs {
+		var extra [1]byte
+		if _, err := io.ReadFull(input, extra[:]); err != io.EOF {
+			if err != nil {
+				return err
+			}
+			return errors.New("unexpected trailing input data")
+		}
 	}
 	return nil
+}
+
+func writePCM(output io.Writer, samples []float64) error {
+	pcm := make([]int16, len(samples))
+	for i, sample := range samples {
+		if math.IsNaN(sample) || math.IsInf(sample, 0) || sample < -1 || sample > 1 {
+			return fmt.Errorf("processor sample %d must be finite and in [-1, 1]", i)
+		}
+		pcm[i] = int16(math.Round(sample * 32767))
+	}
+	return binary.Write(output, binary.LittleEndian, pcm)
 }

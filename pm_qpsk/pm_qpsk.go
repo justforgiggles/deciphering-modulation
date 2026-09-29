@@ -17,7 +17,17 @@ const (
 // Processor retains the underlying carrier phase across symbols and chunks.
 // Its zero value is ready to use. Use a fresh processor per file, not concurrently.
 type Processor struct {
-	phase float64
+	phase     float64
+	carrierHz *float64
+}
+
+// New selects a carrier without restricting spacing or bandwidth.
+// Zero, negative, and above-Nyquist values are allowed for experimentation.
+func New(carrierHz float64) (*Processor, error) {
+	if math.IsNaN(carrierHz) || math.IsInf(carrierHz, 0) {
+		return nil, fmt.Errorf("carrier frequency must be finite")
+	}
+	return &Processor{carrierHz: &carrierHz}, nil
 }
 
 func (*Processor) SampleRate() int    { return sampleRate }
@@ -38,8 +48,12 @@ func (p *Processor) Modulate(bits []byte) ([]float64, error) {
 	}
 	// Indexed by the binary value of the pair: 00, 01, 10, 11.
 	phaseOffsets := [4]float64{math.Pi / 4, 3 * math.Pi / 4, 7 * math.Pi / 4, 5 * math.Pi / 4}
+	carrier := float64(CarrierHz)
+	if p.carrierHz != nil {
+		carrier = *p.carrierHz
+	}
 	output := make([]float64, len(bits)*samplesPerBit)
-	phaseStep := 2 * math.Pi * CarrierHz / sampleRate
+	phaseStep := 2 * math.Pi * (carrier / sampleRate)
 	for i := 0; i < len(bits); i += 2 {
 		pair := bits[i]*2 + bits[i+1]
 		for sample := 0; sample < samplesPerSymbol; sample++ {

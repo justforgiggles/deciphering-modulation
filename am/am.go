@@ -16,14 +16,24 @@ const (
 // Processor retains the carrier phase across chunks. Its zero value is ready
 // to use. Use a fresh processor for each file; do not use it concurrently.
 type Processor struct {
-	phase float64
+	phase     float64
+	carrierHz *float64
+}
+
+// New selects a carrier without restricting spacing or bandwidth.
+// Zero, negative, and above-Nyquist values are allowed for experimentation.
+func New(carrierHz float64) (*Processor, error) {
+	if math.IsNaN(carrierHz) || math.IsInf(carrierHz, 0) {
+		return nil, fmt.Errorf("carrier frequency must be finite")
+	}
+	return &Processor{carrierHz: &carrierHz}, nil
 }
 
 func (*Processor) SampleRate() int    { return sampleRate }
 func (*Processor) SamplesPerBit() int { return samplesPerBit }
 
 // Modulate converts bits (each byte must be 0 or 1) to normalized audio samples.
-// Each bit lasts 480 samples: zero is silence, one is a 1,070 Hz sine wave.
+// Each bit lasts 480 samples: zero is silence, one is a sine wave at the selected carrier.
 // The output is newly allocated and the input is unchanged. Invalid input leaves
 // the carrier phase unchanged.
 func (p *Processor) Modulate(bits []byte) ([]float64, error) {
@@ -32,8 +42,12 @@ func (p *Processor) Modulate(bits []byte) ([]float64, error) {
 			return nil, fmt.Errorf("bit %d is %d: expected 0 or 1", i, bit)
 		}
 	}
+	carrier := float64(CarrierHz)
+	if p.carrierHz != nil {
+		carrier = *p.carrierHz
+	}
 	output := make([]float64, len(bits)*samplesPerBit)
-	phaseStep := 2 * math.Pi * CarrierHz / sampleRate
+	phaseStep := 2 * math.Pi * (carrier / sampleRate)
 	for i, bit := range bits {
 		for sample := 0; sample < samplesPerBit; sample++ {
 			// The bit switches the carrier's amplitude between silence and full volume.
