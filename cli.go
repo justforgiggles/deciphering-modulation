@@ -30,41 +30,25 @@ func run(args []string) error {
 	if flags.NArg() != 0 || *in == "" || *out == "" {
 		return errors.New("specify nonempty input and output paths; no positional arguments are accepted")
 	}
-	processor, err := newProcessor(*kind, nil)
+	processor, err := newProcessor(*kind, modulation.Config{CarrierHz: 1070, SampleRate: 48000, BitRate: 100})
 	if err != nil {
 		return err
 	}
 	return encodeFile(*in, *out, processor)
 }
 
-// A nil carrier preserves the selected module's zero-value defaults.
-func newProcessor(kind string, carrier *float64) (modulation.Processor, error) {
+func newProcessor(kind string, config modulation.Config) (modulation.Processor, error) {
 	switch kind {
 	case "am":
-		if carrier != nil {
-			return am.New(*carrier)
-		}
-		return &am.Processor{}, nil
+		return am.New(config)
 	case "fm":
-		if carrier != nil {
-			return fm.New(*carrier)
-		}
-		return &fm.Processor{}, nil
+		return fm.New(config)
 	case "pm_bpsk":
-		if carrier != nil {
-			return pm_bpsk.New(*carrier)
-		}
-		return &pm_bpsk.Processor{}, nil
+		return pm_bpsk.New(config)
 	case "pm_qpsk":
-		if carrier != nil {
-			return pm_qpsk.New(*carrier)
-		}
-		return &pm_qpsk.Processor{}, nil
+		return pm_qpsk.New(config)
 	case "qam":
-		if carrier != nil {
-			return qam.New(*carrier)
-		}
-		return &qam.Processor{}, nil
+		return qam.New(config)
 	default:
 		return nil, fmt.Errorf("unsupported modulation %q: available: am, fm, pm_bpsk, pm_qpsk, qam", kind)
 	}
@@ -84,11 +68,11 @@ func runFDM(args []string) error {
 	if flags.NArg() != 0 || *first == "" || *second == "" || *out == "" {
 		return errors.New("specify -in1 FIRST -in2 SECOND and a nonempty output; no positional arguments are accepted")
 	}
-	p1, err := newProcessor(*kind, carrier1)
+	p1, err := newProcessor(*kind, modulation.Config{CarrierHz: *carrier1, SampleRate: 48000, BitRate: 100})
 	if err != nil {
 		return err
 	}
-	p2, err := newProcessor(*kind, carrier2)
+	p2, err := newProcessor(*kind, modulation.Config{CarrierHz: *carrier2, SampleRate: 48000, BitRate: 100})
 	if err != nil {
 		return err
 	}

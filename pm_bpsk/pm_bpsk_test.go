@@ -8,15 +8,40 @@ import (
 	"github.com/justforgiggles/deciphering-modulation/modulation"
 )
 
+const (
+	CarrierHz  = 1070
+	BitRate    = 100
+	sampleRate = 48000
+)
+
+func newTestProcessor(t *testing.T) *Processor {
+	t.Helper()
+	p, err := New(modulation.Config{CarrierHz: CarrierHz, SampleRate: sampleRate, BitRate: BitRate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 var _ modulation.Processor = (*Processor)(nil)
 
 func TestModulate(t *testing.T) {
+	var uninitialized Processor
+	if uninitialized.SampleRate() != 0 || uninitialized.SamplesPerBit() != 0 {
+		t.Fatal("uninitialized processor reported timing")
+	}
+	for _, bits := range [][]byte{nil, {0, 0, 0, 0}} {
+		if _, err := uninitialized.Modulate(bits); err == nil {
+			t.Fatal("uninitialized processor accepted input")
+		}
+	}
 	const spb = sampleRate / BitRate
 	bits := []byte{0, 0, 1, 1, 0}
 	original := slices.Clone(bits)
 	// A nonzero start catches accidental resets, even with whole cycles per bit.
 	const initialPhase = 0.37
-	p := Processor{phase: initialPhase}
+	p := newTestProcessor(t)
+	p.phase = initialPhase
 	got, err := p.Modulate(bits)
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +61,8 @@ func TestModulate(t *testing.T) {
 	if !slices.Equal(bits, original) {
 		t.Fatal("input changed")
 	}
-	chunked := Processor{phase: initialPhase}
+	chunked := newTestProcessor(t)
+	chunked.phase = initialPhase
 	var joined []float64
 	for _, chunk := range [][]byte{bits[:1], nil, bits[1:3], bits[3:]} {
 		audio, err := chunked.Modulate(chunk)
@@ -48,7 +74,7 @@ func TestModulate(t *testing.T) {
 	if !slices.Equal(got, joined) {
 		t.Fatal("chunk boundaries changed output")
 	}
-	var zero, one Processor
+	zero, one := newTestProcessor(t), newTestProcessor(t)
 	positive, err := zero.Modulate([]byte{0})
 	if err != nil {
 		t.Fatal(err)

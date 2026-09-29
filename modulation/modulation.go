@@ -1,6 +1,15 @@
 // Package modulation defines the shared bit-to-audio contract for modulations.
 package modulation
 
+// Config supplies explicit carrier and timing settings to every modulation.
+// Rates must be positive and SampleRate must be divisible by BitRate.
+// CarrierHz must be finite; zero, negative, and aliased carriers are permitted.
+type Config struct {
+	CarrierHz  float64
+	SampleRate int
+	BitRate    int
+}
+
 // Processor modulates unpacked bits (0 or 1) into finite audio samples in [-1, 1].
 // Each call returns len(bits)*SamplesPerBit() samples without modifying bits.
 // Timing is positive and fixed for the lifetime of a processor. Implementations

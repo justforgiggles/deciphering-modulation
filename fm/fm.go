@@ -4,53 +4,60 @@ package fm
 import (
 	"fmt"
 	"math"
+
+	"github.com/justforgiggles/deciphering-modulation/modulation"
 )
 
-const (
-	CarrierHz     = 1070
-	DeviationHz   = 250
-	BitRate       = 100
-	sampleRate    = 48000
-	samplesPerBit = sampleRate / BitRate
-)
-
-// Processor retains carrier phase across bits and chunks. Its zero value is
-// ready to use. Use a fresh processor for each file; do not use it concurrently.
+// Processor retains carrier phase across symbols and chunks. Construct it with
+// New and use a fresh processor for each file; do not use it concurrently.
 type Processor struct {
-	phase     float64
-	carrierHz *float64
+	config        modulation.Config
+	samplesPerBit int
+	phase         float64
 }
 
-// New selects a carrier (or FM center) without restricting spacing or bandwidth.
-// Zero, negative, and above-Nyquist values are allowed for experimentation.
-func New(carrierHz float64) (*Processor, error) {
-	if math.IsNaN(carrierHz) || math.IsInf(carrierHz, 0) {
+// New configures carrier and timing without restricting spacing or bandwidth.
+// Zero, negative, and above-Nyquist carriers are allowed for experimentation.
+func New(config modulation.Config) (*Processor, error) {
+	if math.IsNaN(config.CarrierHz) || math.IsInf(config.CarrierHz, 0) {
 		return nil, fmt.Errorf("carrier frequency must be finite")
 	}
-	return &Processor{carrierHz: &carrierHz}, nil
+	if config.SampleRate <= 0 || config.BitRate <= 0 || config.SampleRate%config.BitRate != 0 {
+		return nil, fmt.Errorf("sample rate and bit rate must be positive, with sample rate divisible by bit rate")
+	}
+	return &Processor{config: config, samplesPerBit: config.SampleRate / config.BitRate}, nil
 }
 
-func (*Processor) SampleRate() int    { return sampleRate }
-func (*Processor) SamplesPerBit() int { return samplesPerBit }
+func (p *Processor) SampleRate() int    { return p.config.SampleRate }
+func (p *Processor) SamplesPerBit() int { return p.samplesPerBit }
 
-// Modulate maps 0 to center+DeviationHz and 1 to center-DeviationHz, with a constant unit envelope.
-// Each bit lasts 480 samples. The output is newly allocated and input is unchanged.
+// Modulate maps 0 to center+250 Hz and 1 to center-250 Hz, with a constant unit envelope.
+// Each bit lasts SampleRate/BitRate samples. The output is newly allocated and input is unchanged.
 // Invalid bits return an error without advancing the carrier phase.
 func (p *Processor) Modulate(bits []byte) ([]float64, error) {
+	if p.samplesPerBit == 0 {
+		return nil, fmt.Errorf("processor must be initialized with New")
+	}
 	for i, bit := range bits {
 		if bit > 1 {
 			return nil, fmt.Errorf("bit %d is %d: expected 0 or 1", i, bit)
 		}
 	}
-	carrier := float64(CarrierHz)
-	if p.carrierHz != nil {
-		carrier = *p.carrierHz
+	const deviationHz = 250
+	// Reject sample counts that would overflow before allocating output.
+	if len(bits) > int(^uint(0)>>1)/p.samplesPerBit {
+		return nil, fmt.Errorf("input produces too many samples")
 	}
+	samplesPerBit := p.samplesPerBit
+	const bitsPerSymbol = 1
+	samplesPerSymbol := bitsPerSymbol * samplesPerBit
 	output := make([]float64, len(bits)*samplesPerBit)
-	for i, bit := range bits {
-		frequency := carrier + (1-2*float64(bit))*DeviationHz
-		phaseStep := 2 * math.Pi * (frequency / sampleRate)
-		for sample := 0; sample < samplesPerBit; sample++ {
+	for i := 0; i < len(bits); i += bitsPerSymbol {
+		bit := bits[i]
+		frequency := p.config.CarrierHz + (1-2*float64(bit))*deviationHz
+		// Reduce aliased frequencies before scaling to avoid floating-point overflow.
+		phaseStep := 2 * math.Pi * (math.Mod(frequency, float64(p.config.SampleRate)) / float64(p.config.SampleRate))
+		for sample := 0; sample < samplesPerSymbol; sample++ {
 			// Change frequency, keeping amplitude and phase continuous.
 			output[i*samplesPerBit+sample] = math.Sin(p.phase)
 			p.phase = math.Mod(p.phase+phaseStep, 2*math.Pi)

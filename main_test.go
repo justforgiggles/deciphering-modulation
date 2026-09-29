@@ -11,12 +11,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/justforgiggles/deciphering-modulation/am"
-	"github.com/justforgiggles/deciphering-modulation/fm"
 	"github.com/justforgiggles/deciphering-modulation/modulation"
-	"github.com/justforgiggles/deciphering-modulation/pm_bpsk"
-	"github.com/justforgiggles/deciphering-modulation/pm_qpsk"
-	"github.com/justforgiggles/deciphering-modulation/qam"
 )
 
 // This deliberately uses different timing from AM to check pipeline independence.
@@ -83,12 +78,12 @@ type failingWriter struct{}
 func (failingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
 func TestValidationAndIO(t *testing.T) {
-	limit := (int64(math.MaxUint32) - 36) / (8 * int64((&am.Processor{}).SamplesPerBit()) * 2)
-	if _, err := headerFor(limit, &am.Processor{}); err != nil {
+	limit := (int64(math.MaxUint32) - 36) / (8 * int64((testProcessor(t, "am", 1070)).SamplesPerBit()) * 2)
+	if _, err := headerFor(limit, testProcessor(t, "am", 1070)); err != nil {
 		t.Fatal(err)
 	}
 	for _, count := range []int64{-1, limit + 1, math.MaxInt64} {
-		if _, err := headerFor(count, &am.Processor{}); err == nil {
+		if _, err := headerFor(count, testProcessor(t, "am", 1070)); err == nil {
 			t.Fatal("accepted invalid input size")
 		}
 	}
@@ -127,10 +122,10 @@ func TestFilesAndCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(output)
-	if err != nil || len(before) != 44+8*(&am.Processor{}).SamplesPerBit()*2 || binary.LittleEndian.Uint32(before[24:28]) != 48000 {
+	if err != nil || len(before) != 44+8*(testProcessor(t, "am", 1070)).SamplesPerBit()*2 || binary.LittleEndian.Uint32(before[24:28]) != 48000 {
 		t.Fatalf("incorrect AM WAV: %v", err)
 	}
-	if err := encodeFile(input, output, &am.Processor{}); !errors.Is(err, os.ErrExist) {
+	if err := encodeFile(input, output, testProcessor(t, "am", 1070)); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("existing output was not protected: %v", err)
 	}
 	after, err := os.ReadFile(output)
@@ -153,7 +148,7 @@ func TestFilesAndCLI(t *testing.T) {
 }
 
 func TestFMCLI(t *testing.T) {
-	const spb = 48000 / fm.BitRate
+	const spb = 48000 / 100
 	dir := t.TempDir()
 	input, output := filepath.Join(dir, "input"), filepath.Join(dir, "fm.wav")
 	if err := os.WriteFile(input, []byte{0x80}, 0o600); err != nil {
@@ -172,7 +167,7 @@ func TestFMCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(data) != 44+8*spb*2 || header.DataSize != 8*spb*2 || header.SampleRate != 48000 ||
-		float64(header.DataSize)/float64(header.ByteRate) != 8.0/fm.BitRate {
+		float64(header.DataSize)/float64(header.ByteRate) != 8.0/100 {
 		t.Fatal("incorrect FM WAV size or duration")
 	}
 	var pcm [8 * spb]int16
@@ -180,14 +175,14 @@ func TestFMCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	// First bit selects the lower tone; the next retains its accumulated phase.
-	if pcm[1] != int16(math.Round(math.Sin(2*math.Pi*(fm.CarrierHz-fm.DeviationHz)/48000)*32767)) ||
-		pcm[spb+1] != int16(math.Round(math.Sin(2*math.Pi*(fm.CarrierHz-fm.DeviationHz)/fm.BitRate+2*math.Pi*(fm.CarrierHz+fm.DeviationHz)/48000)*32767)) {
+	if pcm[1] != int16(math.Round(math.Sin(2*math.Pi*(1070-250)/48000)*32767)) ||
+		pcm[spb+1] != int16(math.Round(math.Sin(2*math.Pi*(1070-250)/100+2*math.Pi*(1070+250)/48000)*32767)) {
 		t.Fatal("CLI did not generate continuous-phase FM")
 	}
 }
 
 func TestPMCLI(t *testing.T) {
-	const spb = 48000 / pm_bpsk.BitRate
+	const spb = 48000 / 100
 	dir := t.TempDir()
 	input, output := filepath.Join(dir, "input"), filepath.Join(dir, "pm_bpsk.wav")
 	if err := os.WriteFile(input, []byte{0x80}, 0o600); err != nil {
@@ -206,7 +201,7 @@ func TestPMCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(data) != 44+8*spb*2 || header.DataSize != 8*spb*2 || header.SampleRate != 48000 ||
-		float64(header.DataSize)/float64(header.ByteRate) != 8.0/pm_bpsk.BitRate {
+		float64(header.DataSize)/float64(header.ByteRate) != 8.0/100 {
 		t.Fatal("incorrect PM WAV size or duration")
 	}
 	var pcm [8 * spb]int16
@@ -215,7 +210,7 @@ func TestPMCLI(t *testing.T) {
 	}
 	// MSB-first: initial 1 inverts the carrier; the seven zeros do not.
 	for i, sample := range pcm {
-		want := math.Sin(2 * math.Pi * pm_bpsk.CarrierHz * float64(i) / 48000)
+		want := math.Sin(2 * math.Pi * 1070 * float64(i) / 48000)
 		if i < spb {
 			want = -want
 		}
@@ -226,7 +221,7 @@ func TestPMCLI(t *testing.T) {
 }
 
 func TestQPSKCLI(t *testing.T) {
-	const spb = 48000 / pm_qpsk.BitRate
+	const spb = 48000 / 100
 	dir := t.TempDir()
 	input, output := filepath.Join(dir, "input"), filepath.Join(dir, "pm_qpsk.wav")
 	// 00, 01, 11, 10 covers all phases; the final byte tests a partial file chunk.
@@ -248,7 +243,7 @@ func TestQPSKCLI(t *testing.T) {
 	}
 	count := len(source) * 8 * spb
 	if len(data) != 44+count*2 || int(header.DataSize) != count*2 || header.SampleRate != 48000 ||
-		float64(header.DataSize)/float64(header.ByteRate) != float64(len(source)*8)/pm_qpsk.BitRate {
+		float64(header.DataSize)/float64(header.ByteRate) != float64(len(source)*8)/100 {
 		t.Fatal("incorrect QPSK WAV size or duration")
 	}
 	pcm := make([]int16, count)
@@ -257,7 +252,7 @@ func TestQPSKCLI(t *testing.T) {
 	}
 	offsets := [4]float64{45, 135, 225, 315}
 	for i, sample := range pcm {
-		phase := 2*math.Pi*pm_qpsk.CarrierHz*float64(i)/48000 + offsets[(i/(2*spb))%4]*math.Pi/180
+		phase := 2*math.Pi*1070*float64(i)/48000 + offsets[(i/(2*spb))%4]*math.Pi/180
 		if math.Abs(float64(sample)-math.Round(math.Sin(phase)*32767)) > 1 {
 			t.Fatalf("incorrect QPSK sample %d", i)
 		}
@@ -265,7 +260,7 @@ func TestQPSKCLI(t *testing.T) {
 }
 
 func TestQAMCLI(t *testing.T) {
-	const spb = 48000 / qam.BitRate
+	const spb = 48000 / 100
 	dir := t.TempDir()
 	input, output := filepath.Join(dir, "input"), filepath.Join(dir, "qam.wav")
 	// Two distinct amplitudes per byte; the final byte tests a partial file chunk.
@@ -287,7 +282,7 @@ func TestQAMCLI(t *testing.T) {
 	}
 	count := len(source) * 8 * spb
 	if len(data) != 44+count*2 || int(header.DataSize) != count*2 || header.SampleRate != 48000 ||
-		float64(header.DataSize)/float64(header.ByteRate) != float64(len(source)*8)/qam.BitRate {
+		float64(header.DataSize)/float64(header.ByteRate) != float64(len(source)*8)/100 {
 		t.Fatal("incorrect QAM WAV size or duration")
 	}
 	pcm := make([]int16, count)
@@ -299,7 +294,7 @@ func TestQAMCLI(t *testing.T) {
 		if (i/(4*spb))%2 == 1 {
 			q = -1
 		}
-		phase := 2 * math.Pi * qam.CarrierHz * float64(i) / 48000
+		phase := 2 * math.Pi * 1070 * float64(i) / 48000
 		want := (3*math.Cos(phase) - q*math.Sin(phase)) / math.Sqrt(18)
 		if math.Abs(float64(sample)-math.Round(want*32767)) > 1 {
 			t.Fatalf("incorrect QAM sample %d", i)
