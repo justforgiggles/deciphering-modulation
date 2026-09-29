@@ -6,7 +6,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"path/filepath"
 	"slices"
 	"testing"
 
@@ -113,36 +112,22 @@ func TestFDMStreams(t *testing.T) {
 }
 
 func TestFDMCLIAndErrors(t *testing.T) {
-	dir := t.TempDir()
-	first, second, out := filepath.Join(dir, "first"), filepath.Join(dir, "second"), filepath.Join(dir, "fdm.wav")
-	for _, path := range []string{first, second} {
-		if err := os.WriteFile(path, []byte{0xff}, 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// Identical carriers and files are allowed and combine to the original waveform.
-	args := []string{"fdm", "-in1", first, "-in2", second, "-carrier1", "1070", "-carrier2", "1070", "-out", out}
-	if err := run(args); err != nil {
-		t.Fatal(err)
-	}
+	first := demoInput(t, []byte{0xff})
+	second := first
+	out := runDemo(t, "fdm")
 	got, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, _ := newProcessor("am", modulation.Config{CarrierHz: 1070, SampleRate: 48000, BitRate: 100})
-	var want bytes.Buffer
-	if err := encodeAudio(bytes.NewReader([]byte{0xff}), &want, 1, p); err != nil {
-		t.Fatal(err)
+	const spb = 480
+	if len(got) != 44+8*spb*2 || binary.LittleEndian.Uint32(got[24:28]) != 48000 {
+		t.Fatal("incorrect FDM WAV size or rate")
 	}
-	if !bytes.Equal(got, want.Bytes()) {
-		t.Fatal("identical carriers altered signal")
-	}
-	if err := run(args); err == nil {
-		t.Fatal("overwrote output")
-	}
-	for _, bad := range [][]string{{"fdm"}, {"fdm", "-in1", first}, {"fdm", "-in1", first, "-in2", second, "-carrier2", "NaN"}, {"fdm", "-in1", first, "-in2", second, "-modulation", "unknown"}} {
-		if err := run(bad); err == nil {
-			t.Fatal("accepted invalid CLI")
+	for i := 0; i < 8*spb; i++ {
+		want := (math.Sin(2*math.Pi*1070*float64(i)/48000) + math.Sin(2*math.Pi*3070*float64(i)/48000)) / 2
+		sample := int16(binary.LittleEndian.Uint16(got[44+2*i:]))
+		if math.Abs(float64(sample)-math.Round(want*32767)) > 1 {
+			t.Fatalf("incorrect FDM sample %d", i)
 		}
 	}
 	real, _ := newProcessor("am", modulation.Config{CarrierHz: 1070, SampleRate: 48000, BitRate: 100})
@@ -157,7 +142,7 @@ func TestFDMCLIAndErrors(t *testing.T) {
 	if err := encodeStreams([]io.Reader{bytes.NewReader(nil), bytes.NewReader([]byte{1})}, io.Discard, []int64{0, 0}, []modulation.Processor{&fakeProcessor{}, &fakeProcessor{}}); err == nil {
 		t.Fatal("accepted trailing second input")
 	}
-	partial := filepath.Join(dir, "partial.wav")
+	partial := "partial.wav"
 	bad := &fakeProcessor{modulate: func([]byte) ([]float64, error) { return nil, io.ErrUnexpectedEOF }}
 	if err := encodeFiles([]string{first, second}, partial, []modulation.Processor{&fakeProcessor{}, bad}); err == nil {
 		t.Fatal("ignored second processor failure")

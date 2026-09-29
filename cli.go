@@ -2,8 +2,10 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
+	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/justforgiggles/deciphering-modulation/am"
 	"github.com/justforgiggles/deciphering-modulation/fm"
@@ -14,27 +16,38 @@ import (
 )
 
 func run(args []string) error {
-	if len(args) > 0 && args[0] == "fdm" {
-		return runFDM(args[1:])
+	const usage = "usage: go run . am|fm|pm_bpsk|pm_qpsk|qam|fdm"
+	if len(args) != 1 {
+		return errors.New(usage)
 	}
-	if len(args) == 0 || args[0] != "encode" {
-		return errors.New("usage: go run . fdm -in1 FIRST -in2 SECOND [options]; or go run . encode [-modulation am|fm|pm_bpsk|pm_qpsk|qam] [-in INPUT] [-out OUTPUT]")
+	kind := args[0]
+	carriers := []float64{1070}
+	if kind == "fdm" {
+		kind = "am"
+		carriers = append(carriers, 3070)
 	}
-	flags := flag.NewFlagSet("encode", flag.ContinueOnError)
-	in := flags.String("in", "data/image-small.png", "input file")
-	out := flags.String("out", "modulated.wav", "new output file (must not exist)")
-	kind := flags.String("modulation", "pm_bpsk", "modulation: am, fm, pm_bpsk, pm_qpsk, or qam")
-	if err := flags.Parse(args[1:]); err != nil {
-		return err
+	var inputs []string
+	var processors []modulation.Processor
+	for _, carrier := range carriers {
+		processor, err := newProcessor(kind, modulation.Config{CarrierHz: carrier, SampleRate: 48000, BitRate: 100})
+		if err != nil {
+			return fmt.Errorf("%w; %s", err, usage)
+		}
+		inputs = append(inputs, "data/image-small.png")
+		processors = append(processors, processor)
 	}
-	if flags.NArg() != 0 || *in == "" || *out == "" {
-		return errors.New("specify nonempty input and output paths; no positional arguments are accepted")
-	}
-	processor, err := newProcessor(*kind, modulation.Config{CarrierHz: 1070, SampleRate: 48000, BitRate: 100})
+	output, err := filepath.Abs(filepath.Join("output", fmt.Sprintf("%s-%s-%d.wav", args[0], time.Now().Format("20060102-150405.000000000"), os.Getpid())))
 	if err != nil {
 		return err
 	}
-	return encodeFile(*in, *out, processor)
+	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
+		return err
+	}
+	if err := encodeFiles(inputs, output, processors); err != nil {
+		return err
+	}
+	fmt.Printf("Generated: %s\n", output)
+	return nil
 }
 
 func newProcessor(kind string, config modulation.Config) (modulation.Processor, error) {
@@ -52,29 +65,4 @@ func newProcessor(kind string, config modulation.Config) (modulation.Processor, 
 	default:
 		return nil, fmt.Errorf("unsupported modulation %q: available: am, fm, pm_bpsk, pm_qpsk, qam", kind)
 	}
-}
-
-func runFDM(args []string) error {
-	flags := flag.NewFlagSet("fdm", flag.ContinueOnError)
-	first := flags.String("in1", "", "first input file")
-	second := flags.String("in2", "", "second input file")
-	out := flags.String("out", "fdm.wav", "new output file (must not exist)")
-	kind := flags.String("modulation", "am", "shared modulation: am, fm, pm_bpsk, pm_qpsk, or qam")
-	carrier1 := flags.Float64("carrier1", 1070, "first carrier frequency in Hz (FM center)")
-	carrier2 := flags.Float64("carrier2", 3070, "second carrier frequency in Hz (FM center)")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() != 0 || *first == "" || *second == "" || *out == "" {
-		return errors.New("specify -in1 FIRST -in2 SECOND and a nonempty output; no positional arguments are accepted")
-	}
-	p1, err := newProcessor(*kind, modulation.Config{CarrierHz: *carrier1, SampleRate: 48000, BitRate: 100})
-	if err != nil {
-		return err
-	}
-	p2, err := newProcessor(*kind, modulation.Config{CarrierHz: *carrier2, SampleRate: 48000, BitRate: 100})
-	if err != nil {
-		return err
-	}
-	return encodeFiles([]string{*first, *second}, *out, []modulation.Processor{p1, p2})
 }

@@ -112,15 +112,47 @@ func TestValidationAndIO(t *testing.T) {
 	}
 }
 
+func demoInput(t *testing.T, data []byte) string {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	if err := os.Mkdir("data", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	input := "data/image-small.png"
+	if err := os.WriteFile(input, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return input
+}
+
+func runDemo(t *testing.T, kind string) string {
+	t.Helper()
+	before, err := filepath.Glob("output/*.wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{kind}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := filepath.Glob("output/*.wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before)+1 {
+		t.Fatal("demo did not create a fresh WAV")
+	}
+	for _, path := range after {
+		if !slices.Contains(before, path) {
+			return path
+		}
+	}
+	t.Fatal("demo did not create a fresh WAV")
+	return ""
+}
+
 func TestFilesAndCLI(t *testing.T) {
-	dir := t.TempDir()
-	input, output := filepath.Join(dir, "input"), filepath.Join(dir, "audio.wav")
-	if err := os.WriteFile(input, []byte{0x80}, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := run([]string{"encode", "-modulation", "am", "-in", input, "-out", output}); err != nil {
-		t.Fatal(err)
-	}
+	input := demoInput(t, []byte{0x80})
+	output := runDemo(t, "am")
 	before, err := os.ReadFile(output)
 	if err != nil || len(before) != 44+8*(testProcessor(t, "am", 1070)).SamplesPerBit()*2 || binary.LittleEndian.Uint32(before[24:28]) != 48000 {
 		t.Fatalf("incorrect AM WAV: %v", err)
@@ -132,7 +164,7 @@ func TestFilesAndCLI(t *testing.T) {
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("existing output changed")
 	}
-	partial := filepath.Join(dir, "partial.wav")
+	partial := "partial.wav"
 	p := &fakeProcessor{modulate: func([]byte) ([]float64, error) { return nil, io.ErrUnexpectedEOF }}
 	if err := encodeFile(input, partial, p); !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Fatalf("processor error was not propagated: %v", err)
@@ -140,23 +172,18 @@ func TestFilesAndCLI(t *testing.T) {
 	if _, err := os.Stat(partial); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("failed conversion left partial output")
 	}
-	for _, args := range [][]string{{"decode"}, {"encode", "-modulation", "pm"}, {"encode", "-modulation", "qpsk"}, {"encode", "-modulation", "unknown"}, {"encode", "-in", ""}} {
-		if err := run(args); err == nil {
-			t.Fatalf("accepted invalid command: %v", args)
-		}
+	runDemo(t, "am")
+	after, err = os.ReadFile(output)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("second run changed first output")
 	}
+
 }
 
 func TestFMCLI(t *testing.T) {
 	const spb = 48000 / 100
-	dir := t.TempDir()
-	input, output := filepath.Join(dir, "input"), filepath.Join(dir, "fm.wav")
-	if err := os.WriteFile(input, []byte{0x80}, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := run([]string{"encode", "-modulation", "fm", "-in", input, "-out", output}); err != nil {
-		t.Fatal(err)
-	}
+	demoInput(t, []byte{0x80})
+	output := runDemo(t, "fm")
 	data, err := os.ReadFile(output)
 	if err != nil {
 		t.Fatal(err)
@@ -183,14 +210,8 @@ func TestFMCLI(t *testing.T) {
 
 func TestPMCLI(t *testing.T) {
 	const spb = 48000 / 100
-	dir := t.TempDir()
-	input, output := filepath.Join(dir, "input"), filepath.Join(dir, "pm_bpsk.wav")
-	if err := os.WriteFile(input, []byte{0x80}, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := run([]string{"encode", "-modulation", "pm_bpsk", "-in", input, "-out", output}); err != nil {
-		t.Fatal(err)
-	}
+	demoInput(t, []byte{0x80})
+	output := runDemo(t, "pm_bpsk")
 	data, err := os.ReadFile(output)
 	if err != nil {
 		t.Fatal(err)
@@ -222,16 +243,10 @@ func TestPMCLI(t *testing.T) {
 
 func TestQPSKCLI(t *testing.T) {
 	const spb = 48000 / 100
-	dir := t.TempDir()
-	input, output := filepath.Join(dir, "input"), filepath.Join(dir, "pm_qpsk.wav")
-	// 00, 01, 11, 10 covers all phases; the final byte tests a partial file chunk.
+	// All four phases, including a partial file chunk.
 	source := bytes.Repeat([]byte{0x1e}, chunkSize+1)
-	if err := os.WriteFile(input, source, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := run([]string{"encode", "-modulation", "pm_qpsk", "-in", input, "-out", output}); err != nil {
-		t.Fatal(err)
-	}
+	demoInput(t, source)
+	output := runDemo(t, "pm_qpsk")
 	data, err := os.ReadFile(output)
 	if err != nil {
 		t.Fatal(err)
@@ -261,16 +276,10 @@ func TestQPSKCLI(t *testing.T) {
 
 func TestQAMCLI(t *testing.T) {
 	const spb = 48000 / 100
-	dir := t.TempDir()
-	input, output := filepath.Join(dir, "input"), filepath.Join(dir, "qam.wav")
-	// Two distinct amplitudes per byte; the final byte tests a partial file chunk.
+	// Two amplitudes, including a partial file chunk.
 	source := bytes.Repeat([]byte{0x89}, chunkSize+1)
-	if err := os.WriteFile(input, source, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := run([]string{"encode", "-modulation", "qam", "-in", input, "-out", output}); err != nil {
-		t.Fatal(err)
-	}
+	demoInput(t, source)
+	output := runDemo(t, "qam")
 	data, err := os.ReadFile(output)
 	if err != nil {
 		t.Fatal(err)
@@ -299,5 +308,26 @@ func TestQAMCLI(t *testing.T) {
 		if math.Abs(float64(sample)-math.Round(want*32767)) > 1 {
 			t.Fatalf("incorrect QAM sample %d", i)
 		}
+	}
+}
+
+func TestCLIInvalidInput(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, args := range [][]string{nil, {"unknown"}, {"encode"}, {"am", "extra"}, {"fdm", "-in1", "file"}} {
+		if err := run(args); err == nil {
+			t.Fatalf("accepted invalid command %v", args)
+		}
+		if _, err := os.Stat("output"); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("invalid command created output")
+		}
+	}
+	for _, kind := range []string{"am", "fdm"} {
+		if err := run([]string{kind}); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("missing input: %v", err)
+		}
+	}
+	files, err := os.ReadDir("output")
+	if err != nil || len(files) != 0 {
+		t.Fatal("missing input left output files")
 	}
 }
