@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/justforgiggles/deciphering-modulation/am"
+	"github.com/justforgiggles/deciphering-modulation/css"
 	"github.com/justforgiggles/deciphering-modulation/fm"
 	"github.com/justforgiggles/deciphering-modulation/modulation"
 	"github.com/justforgiggles/deciphering-modulation/pm_bpsk"
@@ -16,7 +17,7 @@ import (
 )
 
 func run(args []string) error {
-	const usage = "usage: go run . am|fm|pm_bpsk|pm_qpsk|qam|fdm"
+	const usage = "usage: go run . am|fm|pm_bpsk|pm_qpsk|qam|css|fdm"
 	if len(args) != 1 {
 		return errors.New(usage)
 	}
@@ -62,7 +63,9 @@ func newProcessor(kind string, config modulation.Config) (modulation.Processor, 
 		return pm_qpsk.New(config)
 	case "qam":
 		return qam.New(config)
+	case "css":
+		return css.New(config)
 	default:
-		return nil, fmt.Errorf("unsupported modulation %q: available: am, fm, pm_bpsk, pm_qpsk, qam", kind)
+		return nil, fmt.Errorf("unsupported modulation %q: available: am, fm, pm_bpsk, pm_qpsk, qam, css", kind)
 	}
 }

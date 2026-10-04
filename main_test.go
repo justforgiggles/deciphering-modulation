@@ -311,6 +311,47 @@ func TestQAMCLI(t *testing.T) {
 	}
 }
 
+func TestCSSCLI(t *testing.T) {
+	const spb = 48000 / 100
+	// Both chirp directions, including a partial file chunk.
+	source := bytes.Repeat([]byte{0x89}, chunkSize+1)
+	demoInput(t, source)
+	output := runDemo(t, "css")
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := bytes.NewReader(data)
+	var header wavHeader
+	if err := binary.Read(reader, binary.LittleEndian, &header); err != nil {
+		t.Fatal(err)
+	}
+	count := len(source) * 8 * spb
+	if len(data) != 44+count*2 || int(header.DataSize) != count*2 || header.SampleRate != 48000 ||
+		header.Channels != 1 || header.BitsPerSample != 16 || header.Format != 1 ||
+		float64(header.DataSize)/float64(header.ByteRate) != float64(len(source)*8)/100 {
+		t.Fatal("incorrect CSS WAV format, size or duration")
+	}
+	pcm := make([]int16, count)
+	if err := binary.Read(reader, binary.LittleEndian, pcm); err != nil {
+		t.Fatal(err)
+	}
+	bits := modulation.BytesToBits(source)
+	for i, sample := range pcm {
+		bit := i / spb
+		seconds := float64(i%spb) / 48000
+		startHz, slope := 820.0, 50000.0
+		if bits[bit] == 1 {
+			startHz, slope = 1320, -50000
+		}
+		cycles := float64(bit)*1070/100 + startHz*seconds + slope*seconds*seconds/2
+		want := math.Sin(2 * math.Pi * cycles)
+		if math.Abs(float64(sample)-math.Round(want*32767)) > 1 {
+			t.Fatalf("incorrect CSS sample %d", i)
+		}
+	}
+}
+
 func TestCLIInvalidInput(t *testing.T) {
 	t.Chdir(t.TempDir())
 	for _, args := range [][]string{nil, {"unknown"}, {"encode"}, {"am", "extra"}, {"fdm", "-in1", "file"}} {

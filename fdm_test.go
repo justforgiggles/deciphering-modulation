@@ -21,7 +21,7 @@ func testProcessor(t *testing.T, kind string, carrier float64) modulation.Proces
 	return p
 }
 
-var modulationKinds = []string{"am", "fm", "pm_bpsk", "pm_qpsk", "qam"}
+var modulationKinds = []string{"am", "fm", "pm_bpsk", "pm_qpsk", "qam", "css"}
 
 func TestConfigurableCarriers(t *testing.T) {
 	bits := modulation.BytesToBits([]byte{0x89})
@@ -43,6 +43,8 @@ func TestConfigurableCarriers(t *testing.T) {
 			phase := 2 * math.Pi * (carrier / float64(p.SampleRate()))
 			want := math.Sin(phase)
 			switch kind {
+			case "css":
+				want = math.Sin(2 * math.Pi * (carrier + 250 - 250/float64(p.SamplesPerBit())) / float64(p.SampleRate()))
 			case "fm":
 				want = math.Sin(2 * math.Pi * ((carrier - 250) / float64(p.SampleRate())))
 			case "pm_bpsk":
@@ -190,6 +192,8 @@ func TestProcessorConfiguration(t *testing.T) {
 					phase := 2 * math.Pi * config.CarrierHz / float64(config.SampleRate)
 					want := math.Sin(phase)
 					switch kind {
+					case "css":
+						want = math.Sin(2 * math.Pi * (config.CarrierHz + 250 - 250/float64(spb)) / float64(config.SampleRate))
 					case "fm":
 						want = math.Sin(2 * math.Pi * (config.CarrierHz - 250) / float64(config.SampleRate))
 					case "pm_bpsk":
