@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"hash/crc32"
 	"io"
 	"math"
 	"os"
@@ -69,6 +70,35 @@ func TestWAVPipeline(t *testing.T) {
 			if pair != [2]int16{int16(bit) * 32767, -int16(bit) * 32767} {
 				t.Fatal("unexpected PCM samples")
 			}
+		}
+	}
+}
+
+func TestFramedFiles(t *testing.T) {
+	dir := t.TempDir()
+	inputs := []string{filepath.Join(dir, "first"), filepath.Join(dir, "second")}
+	payloads := [][]byte{{0x81, 0x42}, {0xff}}
+	processors := []modulation.Processor{&fakeProcessor{}, &fakeProcessor{}}
+	for i, path := range inputs {
+		if err := os.WriteFile(path, payloads[i], 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := encodeFiles(inputs, filepath.Join(dir, "framed.wav"), processors); err != nil {
+		t.Fatal(err)
+	}
+	for i, processor := range processors {
+		var frame bytes.Buffer
+		frame.Write(framePreamble[:])
+		if err := binary.Write(&frame, binary.BigEndian, uint32(len(payloads[i]))); err != nil {
+			t.Fatal(err)
+		}
+		frame.Write(payloads[i])
+		if err := binary.Write(&frame, binary.BigEndian, crc32.ChecksumIEEE(payloads[i])); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(processor.(*fakeProcessor).bits, modulation.BytesToBits(frame.Bytes())) {
+			t.Fatalf("channel %d received the wrong frame", i)
 		}
 	}
 }
@@ -156,7 +186,7 @@ func TestFilesAndCLI(t *testing.T) {
 	input := demoInput(t, []byte{0x80})
 	output := runDemo(t, "am")
 	before, err := os.ReadFile(output)
-	if err != nil || len(before) != 44+8*(testProcessor(t, "am", 1070)).SamplesPerBit()*2 || binary.LittleEndian.Uint32(before[24:28]) != 48000 {
+	if err != nil || len(before) != 44+(1+frameOverhead)*8*(testProcessor(t, "am", 1070)).SamplesPerBit()*2 || binary.LittleEndian.Uint32(before[24:28]) != 48000 {
 		t.Fatalf("incorrect AM WAV: %v", err)
 	}
 	if err := encodeFile(input, output, testProcessor(t, "am", 1070)); !errors.Is(err, os.ErrExist) {
@@ -195,10 +225,11 @@ func TestFMCLI(t *testing.T) {
 	if err := binary.Read(reader, binary.LittleEndian, &header); err != nil {
 		t.Fatal(err)
 	}
-	if len(data) != 44+8*spb*2 || header.DataSize != 8*spb*2 || header.SampleRate != 48000 ||
-		float64(header.DataSize)/float64(header.ByteRate) != 8.0/100 {
+	if len(data) != 44+(1+frameOverhead)*8*spb*2 || int(header.DataSize) != (1+frameOverhead)*8*spb*2 || header.SampleRate != 48000 ||
+		float64(header.DataSize)/float64(header.ByteRate) != float64((1+frameOverhead)*8)/100 {
 		t.Fatal("incorrect FM WAV size or duration")
 	}
+	reader.Seek(int64((len(framePreamble)+4)*8*spb*2), io.SeekCurrent)
 	var pcm [8 * spb]int16
 	if err := binary.Read(reader, binary.LittleEndian, &pcm); err != nil {
 		t.Fatal(err)
@@ -223,10 +254,11 @@ func TestPMCLI(t *testing.T) {
 	if err := binary.Read(reader, binary.LittleEndian, &header); err != nil {
 		t.Fatal(err)
 	}
-	if len(data) != 44+8*spb*2 || header.DataSize != 8*spb*2 || header.SampleRate != 48000 ||
-		float64(header.DataSize)/float64(header.ByteRate) != 8.0/100 {
+	if len(data) != 44+(1+frameOverhead)*8*spb*2 || int(header.DataSize) != (1+frameOverhead)*8*spb*2 || header.SampleRate != 48000 ||
+		float64(header.DataSize)/float64(header.ByteRate) != float64((1+frameOverhead)*8)/100 {
 		t.Fatal("incorrect PM WAV size or duration")
 	}
+	reader.Seek(int64((len(framePreamble)+4)*8*spb*2), io.SeekCurrent)
 	var pcm [8 * spb]int16
 	if err := binary.Read(reader, binary.LittleEndian, &pcm); err != nil {
 		t.Fatal(err)
@@ -259,10 +291,11 @@ func TestQPSKCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	count := len(source) * 8 * spb
-	if len(data) != 44+count*2 || int(header.DataSize) != count*2 || header.SampleRate != 48000 ||
-		float64(header.DataSize)/float64(header.ByteRate) != float64(len(source)*8)/100 {
+	if len(data) != 44+(count+frameOverhead*8*spb)*2 || int(header.DataSize) != (count+frameOverhead*8*spb)*2 || header.SampleRate != 48000 ||
+		float64(header.DataSize)/float64(header.ByteRate) != float64((len(source)+frameOverhead)*8)/100 {
 		t.Fatal("incorrect QPSK WAV size or duration")
 	}
+	reader.Seek(int64((len(framePreamble)+4)*8*spb*2), io.SeekCurrent)
 	pcm := make([]int16, count)
 	if err := binary.Read(reader, binary.LittleEndian, pcm); err != nil {
 		t.Fatal(err)
@@ -292,10 +325,11 @@ func TestQAMCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	count := len(source) * 8 * spb
-	if len(data) != 44+count*2 || int(header.DataSize) != count*2 || header.SampleRate != 48000 ||
-		float64(header.DataSize)/float64(header.ByteRate) != float64(len(source)*8)/100 {
+	if len(data) != 44+(count+frameOverhead*8*spb)*2 || int(header.DataSize) != (count+frameOverhead*8*spb)*2 || header.SampleRate != 48000 ||
+		float64(header.DataSize)/float64(header.ByteRate) != float64((len(source)+frameOverhead)*8)/100 {
 		t.Fatal("incorrect QAM WAV size or duration")
 	}
+	reader.Seek(int64((len(framePreamble)+4)*8*spb*2), io.SeekCurrent)
 	pcm := make([]int16, count)
 	if err := binary.Read(reader, binary.LittleEndian, pcm); err != nil {
 		t.Fatal(err)
@@ -329,11 +363,12 @@ func TestCSSCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	count := len(source) * 8 * spb
-	if len(data) != 44+count*2 || int(header.DataSize) != count*2 || header.SampleRate != 48000 ||
+	if len(data) != 44+(count+frameOverhead*8*spb)*2 || int(header.DataSize) != (count+frameOverhead*8*spb)*2 || header.SampleRate != 48000 ||
 		header.Channels != 1 || header.BitsPerSample != 16 || header.Format != 1 ||
-		float64(header.DataSize)/float64(header.ByteRate) != float64(len(source)*8)/100 {
+		float64(header.DataSize)/float64(header.ByteRate) != float64((len(source)+frameOverhead)*8)/100 {
 		t.Fatal("incorrect CSS WAV format, size or duration")
 	}
+	reader.Seek(int64((len(framePreamble)+4)*8*spb*2), io.SeekCurrent)
 	pcm := make([]int16, count)
 	if err := binary.Read(reader, binary.LittleEndian, pcm); err != nil {
 		t.Fatal(err)
@@ -371,11 +406,12 @@ func TestCSS16CLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	count := len(source) * 8 * spb
-	if len(data) != 44+count*2 || int(header.DataSize) != count*2 || header.SampleRate != 48000 ||
+	if len(data) != 44+(count+frameOverhead*8*spb)*2 || int(header.DataSize) != (count+frameOverhead*8*spb)*2 || header.SampleRate != 48000 ||
 		header.Channels != 1 || header.BitsPerSample != 16 || header.Format != 1 ||
-		float64(header.DataSize)/float64(header.ByteRate) != float64(len(source)*8)/100 {
+		float64(header.DataSize)/float64(header.ByteRate) != float64((len(source)+frameOverhead)*8)/100 {
 		t.Fatal("incorrect CSS-16 WAV format, size or duration")
 	}
+	reader.Seek(int64((len(framePreamble)+4)*8*spb*2), io.SeekCurrent)
 	pcm := make([]int16, count)
 	if err := binary.Read(reader, binary.LittleEndian, pcm); err != nil {
 		t.Fatal(err)

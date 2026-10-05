@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"math"
 	"os"
@@ -13,6 +15,11 @@ import (
 )
 
 const chunkSize = 256
+
+// File frames carry sync bytes, a big-endian payload length, and a payload CRC32.
+var framePreamble = [...]byte{0xa2, 0x3c, 0xee, 0xfc, 0xa7, 0x84, 0xdf, 0x4b, 0x38, 0x8c, 0xc4, 0xcb, 0x53, 0xa6, 0x91, 0xb1}
+
+const frameOverhead = len(framePreamble) + 4 + 4
 
 // wavHeader describes the canonical mono, 16-bit PCM format we write.
 type wavHeader struct {
@@ -87,7 +94,24 @@ func encodeFiles(inputPaths []string, outputPath string, processors []modulation
 		if !info.Mode().IsRegular() {
 			return errors.New("input must be a regular file")
 		}
-		inputs[i], counts[i] = input, info.Size()
+		if info.Size() < 0 || info.Size() > math.MaxUint32 {
+			return errors.New("input is too large for a framed WAV")
+		}
+		// Read once for the trailing CRC, then rewind for the streaming encoder.
+		checksum := crc32.NewIEEE()
+		if _, err := io.Copy(checksum, input); err != nil {
+			return err
+		}
+		if _, err := input.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		var prefix [len(framePreamble) + 4]byte
+		copy(prefix[:], framePreamble[:])
+		binary.BigEndian.PutUint32(prefix[len(framePreamble):], uint32(info.Size()))
+		var suffix [4]byte
+		binary.BigEndian.PutUint32(suffix[:], checksum.Sum32())
+		inputs[i] = io.MultiReader(bytes.NewReader(prefix[:]), input, bytes.NewReader(suffix[:]))
+		counts[i] = info.Size() + int64(frameOverhead)
 	}
 	if _, err := streamHeader(counts, processors); err != nil {
 		return err
