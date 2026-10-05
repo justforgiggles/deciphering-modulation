@@ -15,7 +15,7 @@ type Config struct {
 // Timing is positive and fixed for the lifetime of a processor. Implementations
 // preserve signal state across chunks and leave it unchanged on invalid input.
 // Implementations may require complete symbols (QPSK requires an even bit count).
-// 16-QAM requires the bit count to be divisible by four.
+// 16-QAM and 16-symbol CSS require the bit count to be divisible by four.
 // SamplesPerBit is the average sample count per bit, including multi-bit symbols.
 type Processor interface {
 	Modulate(bits []byte) ([]float64, error)

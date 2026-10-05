@@ -352,6 +352,46 @@ func TestCSSCLI(t *testing.T) {
 	}
 }
 
+func TestCSS16CLI(t *testing.T) {
+	const spb = 48000 / 100
+	const symbolSamples = 4 * spb
+	// All 16 symbols plus a partial file chunk.
+	source := bytes.Repeat([]byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}, chunkSize/8+1)
+	demoInput(t, source)
+	output := runDemo(t, "css_16")
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := bytes.NewReader(data)
+	var header wavHeader
+	if err := binary.Read(reader, binary.LittleEndian, &header); err != nil {
+		t.Fatal(err)
+	}
+	count := len(source) * 8 * spb
+	if len(data) != 44+count*2 || int(header.DataSize) != count*2 || header.SampleRate != 48000 ||
+		header.Channels != 1 || header.BitsPerSample != 16 || header.Format != 1 ||
+		float64(header.DataSize)/float64(header.ByteRate) != float64(len(source)*8)/100 {
+		t.Fatal("incorrect CSS-16 WAV format, size or duration")
+	}
+	pcm := make([]int16, count)
+	if err := binary.Read(reader, binary.LittleEndian, pcm); err != nil {
+		t.Fatal(err)
+	}
+	for i, sample := range pcm {
+		symbolIndex := i / symbolSamples
+		shift := float64(symbolIndex%16) / 16
+		seconds := float64(i%symbolSamples) / 48000
+		// Analytical integral of the ramp minus its frequency jump at wrap.
+		cycles := float64(symbolIndex)*1070*0.04 + (820+500*shift)*seconds + 6250*seconds*seconds
+		cycles -= 500 * max(0, seconds-0.04*(1-shift))
+		want := math.Sin(2 * math.Pi * cycles)
+		if math.Abs(float64(sample)-math.Round(want*32767)) > 1 {
+			t.Fatalf("incorrect CSS-16 sample %d", i)
+		}
+	}
+}
+
 func TestCLIInvalidInput(t *testing.T) {
 	t.Chdir(t.TempDir())
 	for _, args := range [][]string{nil, {"unknown"}, {"encode"}, {"am", "extra"}, {"fdm", "-in1", "file"}} {
