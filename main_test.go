@@ -118,9 +118,11 @@ func demoInput(t *testing.T, data []byte) string {
 	if err := os.Mkdir("data", 0o755); err != nil {
 		t.Fatal(err)
 	}
-	input := "data/image-small.png"
-	if err := os.WriteFile(input, data, 0o600); err != nil {
-		t.Fatal(err)
+	input := "data/lorem-ipsum-1.txt"
+	for _, path := range []string{input, "data/lorem-ipsum-2.txt"} {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return input
 }

@@ -117,7 +117,10 @@ func TestFDMStreams(t *testing.T) {
 
 func TestFDMCLIAndErrors(t *testing.T) {
 	first := demoInput(t, []byte{0xff})
-	second := first
+	second := "data/lorem-ipsum-2.txt"
+	if err := os.WriteFile(second, []byte{0x0f}, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	out := runDemo(t, "fdm")
 	got, err := os.ReadFile(out)
 	if err != nil {
@@ -128,7 +131,11 @@ func TestFDMCLIAndErrors(t *testing.T) {
 		t.Fatal("incorrect FDM WAV size or rate")
 	}
 	for i := 0; i < 8*spb; i++ {
-		want := (math.Sin(2*math.Pi*1070*float64(i)/48000) + math.Sin(2*math.Pi*3070*float64(i)/48000)) / 2
+		want := math.Sin(2 * math.Pi * 1070 * float64(i) / 48000)
+		if i >= 4*spb {
+			want += math.Sin(2 * math.Pi * 3070 * float64(i) / 48000)
+		}
+		want /= 2
 		sample := int16(binary.LittleEndian.Uint16(got[44+2*i:]))
 		if math.Abs(float64(sample)-math.Round(want*32767)) > 1 {
 			t.Fatalf("incorrect FDM sample %d", i)

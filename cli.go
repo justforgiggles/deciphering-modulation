@@ -30,12 +30,12 @@ func run(args []string) error {
 	}
 	var inputs []string
 	var processors []modulation.Processor
-	for _, carrier := range carriers {
+	for i, carrier := range carriers {
 		processor, err := newProcessor(kind, modulation.Config{CarrierHz: carrier, SampleRate: 48000, BitRate: 100})
 		if err != nil {
 			return fmt.Errorf("%w; %s", err, usage)
 		}
-		inputs = append(inputs, "data/image-small.png")
+		inputs = append(inputs, fmt.Sprintf("data/lorem-ipsum-%d.txt", i+1))
 		processors = append(processors, processor)
 	}
 	output, err := filepath.Abs(filepath.Join("output", fmt.Sprintf("%s-%s-%d.wav", args[0], time.Now().Format("20060102-150405.000000000"), os.Getpid())))
