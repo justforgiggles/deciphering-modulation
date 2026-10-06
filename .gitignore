@@ -1,3 +1,4 @@
 /deciphering-modulation
 /output
 __pycache__/
+.venv/
