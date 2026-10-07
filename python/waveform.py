@@ -1,6 +1,7 @@
 """Plot 1.45–1.55 seconds of the filtered mixed WAV waveform."""
 
 from pathlib import Path
+from math import cos, pi, sin
 
 import matplotlib
 matplotlib.use("Agg")
@@ -28,19 +29,25 @@ def bandpass_filter(x, lowcut, highcut, fs, order=4):
     return sosfiltfilt(sos, x)
 
 def low_pass(samples, alpha):
-    filtered = np.empty(len(samples), dtype=np.float64)
+    result = np.empty(len(samples), dtype=np.float64)
     previous = 0.0
     for index, sample in enumerate(samples):
         previous += alpha * (sample - previous)
-        filtered[index] = previous
-    return filtered
+        result[index] = previous
+    return result
 
 def downconvert(samples, sample_rate):
-    phase = 2 * np.pi * CARRIER_HZ * np.arange(len(samples)) / sample_rate
-    amplitude = 2 * samples.astype(np.float64) / 32768
-    alpha = 1 / (1 + sample_rate / (2 * np.pi * BASEBAND_CUTOFF_HZ))
-    in_phase = low_pass(low_pass(amplitude * np.cos(phase), alpha), alpha)
-    quadrature = low_pass(low_pass(-amplitude * np.sin(phase), alpha), alpha)
+    alpha = 1 / (1 + sample_rate / (2 * pi * BASEBAND_CUTOFF_HZ))
+    in_phase = np.empty(len(samples), dtype=np.float64)
+    quadrature = np.empty(len(samples), dtype=np.float64)
+    for index, sample in enumerate(samples):
+        phase = 2 * pi * CARRIER_HZ * index / sample_rate
+        amplitude = 2 * float(sample) / 32768
+        in_phase[index] = amplitude * cos(phase)
+        quadrature[index] = -amplitude * sin(phase)
+
+    in_phase = low_pass(low_pass(in_phase, alpha), alpha)
+    quadrature = low_pass(low_pass(quadrature, alpha), alpha)
     return in_phase, quadrature
 
 def matched_filter(samples, sample_rate):
@@ -83,9 +90,14 @@ def main():
     
     ### </CODE>
 
+    times = []
+    amplitudes = []
+    for index in range(start, end):
+        times.append(index / sample_rate)
+        amplitudes.append(samples[index] / 32768)
+
     fig, ax = plt.subplots(figsize=(12, 4))
-    ax.plot(np.arange(start, end) / sample_rate,
-            samples[start:end] / 32768, linewidth=0.5)
+    ax.plot(times, amplitudes, linewidth=0.5)
     ax.set(xlabel="Time (s)", ylabel="Amplitude",
            xlim=(START_SECONDS, END_SECONDS))
     fig.tight_layout()
