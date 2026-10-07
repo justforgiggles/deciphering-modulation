@@ -7,11 +7,10 @@ from audio_io import read_pcm, write_pcm
 
 ROOT = Path(__file__).resolve().parent.parent
 NOISE_FILE = ROOT / "data/audio.wav"
-SIGNAL_FILE = ROOT / "output/am-20261005-144417.927849000-29219.wav"
+SIGNAL_FILE = ROOT / "output/fm-20261007-160753.405470000-1878.wav"
 OUTPUT_FILE = ROOT / "output/mixed.wav"
 OFFSET_SECONDS = 1.5
 SNR_DB = 0
-FREQUENCY_WOBBLE_HZ = 50
 
 
 def process(signal, noise, sample_rate):
@@ -25,14 +24,6 @@ def process(signal, noise, sample_rate):
 
     signal_part = signal[: end - offset].astype(np.float64)
     noise_part = noise[offset:end].astype(np.float64)
-
-    if FREQUENCY_WOBBLE_HZ:
-        count = len(signal_part)
-        spectrum = np.fft.fft(signal_part)
-        spectrum[1 : (count + 1) // 2] *= 2
-        spectrum[count // 2 + 1 :] = 0
-        phase = FREQUENCY_WOBBLE_HZ * (1 - np.cos(2 * np.pi * np.arange(count) / sample_rate))
-        signal_part = np.real(np.fft.ifft(spectrum) * np.exp(1j * phase))
 
     signal_rms = np.sqrt(np.mean(signal_part**2))
     print(f"signal_rms: {signal_rms}")

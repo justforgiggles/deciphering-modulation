@@ -8,7 +8,6 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.signal import butter, sosfiltfilt
 
 from audio_io import read_pcm
 
@@ -24,49 +23,27 @@ BANDWIDTH_HZ = 500
 BASEBAND_CUTOFF_HZ = 250
 BIT_RATE = 100
 
-def bandpass_filter(x, lowcut, highcut, fs, order=4):
-    sos = butter(order, [lowcut, highcut], btype="bandpass", fs=fs, output="sos")
-    return sosfiltfilt(sos, x)
+def lowpass_filter(x, cutoff_hz, sample_rate, num_taps=101):
+    # Normalized cutoff frequency: 0 < fc < 0.5
+    fc = cutoff_hz / sample_rate
 
-def low_pass(samples, alpha):
-    result = np.empty(len(samples), dtype=np.float64)
-    previous = 0.0
-    for index, sample in enumerate(samples):
-        previous += alpha * (sample - previous)
-        result[index] = previous
-    return result
+    if not 0 < fc < 0.5:
+        raise ValueError("cutoff_hz must be between 0 and sample_rate / 2")
 
-def downconvert(samples, sample_rate):
-    alpha = 1 / (1 + sample_rate / (2 * pi * BASEBAND_CUTOFF_HZ))
-    in_phase = np.empty(len(samples), dtype=np.float64)
-    quadrature = np.empty(len(samples), dtype=np.float64)
-    for index, sample in enumerate(samples):
-        phase = 2 * pi * CARRIER_HZ * index / sample_rate
-        amplitude = 2 * float(sample) / 32768
-        in_phase[index] = amplitude * cos(phase)
-        quadrature[index] = -amplitude * sin(phase)
+    # Symmetric sample positions
+    n = np.arange(num_taps) - (num_taps - 1) / 2
 
-    in_phase = low_pass(low_pass(in_phase, alpha), alpha)
-    quadrature = low_pass(low_pass(quadrature, alpha), alpha)
-    return in_phase, quadrature
+    # Ideal low-pass impulse response
+    h = 2 * fc * np.sinc(2 * fc * n)
 
-def matched_filter(samples, sample_rate):
-    window = round(sample_rate / BIT_RATE)
-    if window < 1:
-        raise ValueError("sample rate must provide at least one sample per bit")
+    # Apply a window to reduce ringing
+    h *= np.hamming(num_taps)
 
-    in_phase, quadrature = downconvert(samples, sample_rate)
-    response = np.empty(len(samples), dtype=np.float64)
-    sum_i = sum_q = 0.0
-    for index in range(len(samples)):
-        sum_i += in_phase[index]
-        sum_q += quadrature[index]
-        if index >= window:
-            sum_i -= in_phase[index - window]
-            sum_q -= quadrature[index - window]
-        response[index] = (sum_i / window) ** 2 + (sum_q / window) ** 2
-    return response
+    # Normalize so DC gain is 1
+    h /= np.sum(h)
 
+    # Apply filter
+    return np.convolve(x, h, mode="same")
 
 def main():
     samples, sample_rate = read_pcm(INPUT_FILE)
@@ -76,17 +53,8 @@ def main():
         raise ValueError(f"{INPUT_FILE} is shorter than {END_SECONDS} seconds")
     
     ### <CODE>
-
-    # f = 1000
-    # t = np.arange(len(samples)) / sample_rate
-    # phase = np.pi / 1
-    # sine = np.sin(2 * np.pi * f * t + phase)
-    # cosine = np.cos(2 * np.pi * f * t + phase)
-
-    # samples = samples * sine
     
-    # samples = bandpass_filter(samples, 1000, 1140, sample_rate)
-    samples = matched_filter(samples, sample_rate)
+    result = lowpass_filter(samples, 500, sample_rate, 101)
     
     ### </CODE>
 
