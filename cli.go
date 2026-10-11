@@ -23,10 +23,10 @@ func run(args []string) error {
 		return errors.New(usage)
 	}
 	kind := args[0]
-	carriers := []float64{1070}
+	carriers := []float64{6000}
 	if kind == "fdm" {
 		kind = "am"
-		carriers = append(carriers, 3070)
+		carriers = append(carriers, 10000)
 	}
 	var inputs []string
 	var processors []modulation.Processor

@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 RATE = 48000
-CARRIER = 1070
+CARRIER = 6000
 SPB = 480
 SIZES = {"am": 1, "fm": 1, "pm_bpsk": 1, "pm_qpsk": 2, "qam": 4, "fdm": 1}
 TITLES = {"am": "AM / OOK", "fm": "FM / binary FSK", "pm_bpsk": "BPSK", "pm_qpsk": "QPSK", "qam": "16-QAM", "fdm": "FDM / two AM carriers"}
@@ -68,7 +68,7 @@ def recover(path, kind):
                 recovered, tone, residual = recover_fm(samples, start)
                 tones.append(tone)
             else:
-                recovered, residual = fit(samples, start, [1070, 3070] if kind == "fdm" else [1070])
+                recovered, residual = fit(samples, start, [CARRIER, CARRIER + 2000] if kind == "fdm" else [CARRIER])
             points.append(recovered)
             residuals.append(residual)
     points = np.array(points)
@@ -89,7 +89,7 @@ def plot(path, kind):
         ax.axvline(0, color="#bbc3ce", linewidth=0.8)
         ax.grid(alpha=0.2)
         if kind == "fm":
-            for tone, color in [(820, "#2563eb"), (1320, "#e87924")]:
+            for tone, color in [(CARRIER - 250, "#2563eb"), (CARRIER + 250, "#e87924")]:
                 trajectory = points[tones == tone]
                 ax.scatter(trajectory.real, trajectory.imag, s=2, alpha=0.25, color=color, rasterized=True)
                 ax.scatter([], [], s=30, color=color, label=f"{tone} Hz ({tone-CARRIER:+d} Hz baseband)")
@@ -98,9 +98,9 @@ def plot(path, kind):
         else:
             values = points[:, channel]
             ax.scatter(values.real, values.imag, s=65, alpha=0.35, color="#2563eb", edgecolors="none")
-            ax.set_title(f"{[1070, 3070][channel]} Hz carrier · mixer gain ½" if kind == "fdm" else "Recovered I/Q constellation")
+            ax.set_title(f"{[CARRIER, CARRIER + 2000][channel]} Hz carrier · mixer gain ½" if kind == "fdm" else "Recovered I/Q constellation")
     fig.suptitle(TITLES[kind], fontsize=20, fontweight="bold")
-    note = "Tone fits reconstructed relative to 1070 Hz" if kind == "fm" else "Joint carrier least squares" if kind == "fdm" else "Per-symbol carrier least squares"
+    note = f"Tone fits reconstructed relative to {CARRIER} Hz" if kind == "fm" else "Joint carrier least squares" if kind == "fdm" else "Per-symbol carrier least squares"
     fig.text(0.5, 0.065, f"{len(points):,} evenly sampled symbols / {total:,} total · 48 kHz · 100 bit/s\n{note}; known timing and carrier phase\ns(t) = I cos(2πfct) − Q sin(2πfct); no constellation snapping", ha="center", fontsize=9, color="#475569")
     fig.tight_layout(rect=(0, 0.15, 1, 0.94))
     # Exclusive creation protects plots from earlier runs.
@@ -119,14 +119,14 @@ def plot(path, kind):
 
 def self_test():
     start = 123 * SPB
-    for coefficients, frequencies in [([0.3, -0.8], [1070]), ([0.1, -0.5, -0.2, 0.25], [1070, 3070])]:
+    for coefficients, frequencies in [([0.3, -0.8], [CARRIER]), ([0.1, -0.5, -0.2, 0.25], [CARRIER, CARRIER + 2000])]:
         samples = basis(SPB, start, frequencies) @ coefficients
         quantized = np.round(samples * 32767) / 32767
         got, residual = fit(quantized, start, frequencies)
         expected = np.array(coefficients[::2]) + 1j * np.array(coefficients[1::2])
         assert np.allclose(got, expected, atol=1e-5)
         assert residual < 1e-9
-    for tone in (820, 1320):
+    for tone in (CARRIER - 250, CARRIER + 250):
         coefficient = 0.7 * np.exp(0.37j)
         samples = basis(SPB, start, [tone]) @ [coefficient.real, coefficient.imag]
         trajectory, recovered_tone, residual = recover_fm(samples, start)

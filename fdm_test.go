@@ -131,9 +131,9 @@ func TestFDMCLIAndErrors(t *testing.T) {
 		t.Fatal("incorrect FDM WAV size or rate")
 	}
 	for i := 0; i < 8*spb; i++ {
-		want := math.Sin(2 * math.Pi * 1070 * float64(i) / 48000)
+		want := math.Sin(2 * math.Pi * 6000 * float64((len(framePreamble)+4)*8*spb+i) / 48000)
 		if i >= 4*spb {
-			want += math.Sin(2 * math.Pi * 3070 * float64(i) / 48000)
+			want += math.Sin(2 * math.Pi * 10000 * float64((len(framePreamble)+4)*8*spb+i) / 48000)
 		}
 		want /= 2
 		sample := int16(binary.LittleEndian.Uint16(got[44+2*((len(framePreamble)+4)*8*spb+i):]))

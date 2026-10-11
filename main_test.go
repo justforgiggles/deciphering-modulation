@@ -89,7 +89,7 @@ func TestFramedFiles(t *testing.T) {
 	}
 	for i, processor := range processors {
 		var frame bytes.Buffer
-		frame.Write(framePreamble[:])
+		frame.Write([]byte{0xa2, 0x3c, 0xee, 0xfc, 0xa7, 0x84, 0xdf, 0x4b})
 		if err := binary.Write(&frame, binary.BigEndian, uint32(len(payloads[i]))); err != nil {
 			t.Fatal(err)
 		}
@@ -235,8 +235,12 @@ func TestFMCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	// First bit selects the lower tone; the next retains its accumulated phase.
-	if pcm[1] != int16(math.Round(math.Sin(2*math.Pi*(1070-250)/48000)*32767)) ||
-		pcm[spb+1] != int16(math.Round(math.Sin(2*math.Pi*(1070-250)/100+2*math.Pi*(1070+250)/48000)*32767)) {
+	phase := 0.0
+	for _, bit := range modulation.BytesToBits(append(framePreamble[:], 0, 0, 0, 1)) {
+		phase += 2 * math.Pi * (6000 + (1-2*float64(bit))*250) / 100
+	}
+	if math.Abs(float64(pcm[1])-math.Round(math.Sin(phase+2*math.Pi*(6000-250)/48000)*32767)) > 1 ||
+		math.Abs(float64(pcm[spb+1])-math.Round(math.Sin(phase+2*math.Pi*(6000-250)/100+2*math.Pi*(6000+250)/48000)*32767)) > 1 {
 		t.Fatal("CLI did not generate continuous-phase FM")
 	}
 }
@@ -265,7 +269,7 @@ func TestPMCLI(t *testing.T) {
 	}
 	// MSB-first: initial 1 inverts the carrier; the seven zeros do not.
 	for i, sample := range pcm {
-		want := math.Sin(2 * math.Pi * 1070 * float64(i) / 48000)
+		want := math.Sin(2 * math.Pi * 6000 * float64((len(framePreamble)+4)*8*spb+i) / 48000)
 		if i < spb {
 			want = -want
 		}
@@ -302,7 +306,7 @@ func TestQPSKCLI(t *testing.T) {
 	}
 	offsets := [4]float64{45, 135, 225, 315}
 	for i, sample := range pcm {
-		phase := 2*math.Pi*1070*float64(i)/48000 + offsets[(i/(2*spb))%4]*math.Pi/180
+		phase := 2*math.Pi*6000*float64((len(framePreamble)+4)*8*spb+i)/48000 + offsets[(i/(2*spb))%4]*math.Pi/180
 		if math.Abs(float64(sample)-math.Round(math.Sin(phase)*32767)) > 1 {
 			t.Fatalf("incorrect QPSK sample %d", i)
 		}
@@ -339,7 +343,7 @@ func TestQAMCLI(t *testing.T) {
 		if (i/(4*spb))%2 == 1 {
 			q = -1
 		}
-		phase := 2 * math.Pi * 1070 * float64(i) / 48000
+		phase := 2 * math.Pi * 6000 * float64((len(framePreamble)+4)*8*spb+i) / 48000
 		want := (3*math.Cos(phase) - q*math.Sin(phase)) / math.Sqrt(18)
 		if math.Abs(float64(sample)-math.Round(want*32767)) > 1 {
 			t.Fatalf("incorrect QAM sample %d", i)
@@ -377,11 +381,11 @@ func TestCSSCLI(t *testing.T) {
 	for i, sample := range pcm {
 		bit := i / spb
 		seconds := float64(i%spb) / 48000
-		startHz, slope := 820.0, 50000.0
+		startHz, slope := 5750.0, 50000.0
 		if bits[bit] == 1 {
-			startHz, slope = 1320, -50000
+			startHz, slope = 6250, -50000
 		}
-		cycles := float64(bit)*1070/100 + startHz*seconds + slope*seconds*seconds/2
+		cycles := float64((len(framePreamble)+4)*8+bit)*6000/100 + startHz*seconds + slope*seconds*seconds/2
 		want := math.Sin(2 * math.Pi * cycles)
 		if math.Abs(float64(sample)-math.Round(want*32767)) > 1 {
 			t.Fatalf("incorrect CSS sample %d", i)
@@ -421,7 +425,7 @@ func TestCSS16CLI(t *testing.T) {
 		shift := float64(symbolIndex%16) / 16
 		seconds := float64(i%symbolSamples) / 48000
 		// Analytical integral of the ramp minus its frequency jump at wrap.
-		cycles := float64(symbolIndex)*1070*0.04 + (820+500*shift)*seconds + 6250*seconds*seconds
+		cycles := float64((len(framePreamble)+4)*2+symbolIndex)*6000*0.04 + (5750+500*shift)*seconds + 6250*seconds*seconds
 		cycles -= 500 * max(0, seconds-0.04*(1-shift))
 		want := math.Sin(2 * math.Pi * cycles)
 		if math.Abs(float64(sample)-math.Round(want*32767)) > 1 {
